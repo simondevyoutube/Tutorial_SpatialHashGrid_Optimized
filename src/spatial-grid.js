@@ -1,5 +1,4 @@
-import {math} from './math.js';
-
+import { math } from './math.js';
 
 export const spatial_grid = (() => {
   
@@ -58,9 +57,8 @@ export const spatial_grid = (() => {
     }
   }
 
-  class SpatialHash_Slow {
+   class SpatialHash_SlowFixed {
     constructor(bounds, dimensions) {
-      const [x, y] = dimensions;
       this._cells = new Map();
       this._dimensions = dimensions;
       this._bounds = bounds;
@@ -112,8 +110,9 @@ export const spatial_grid = (() => {
         for (let y = i1[1], yn = i2[1]; y <= yn; ++y) {
           const k = this._Key(x, y);
 
-          if (k in this._cells) {
-            for (let v of this._cells[k]) {
+          const cellClients = this._cells.get(k);
+          if (cellClients) {
+            for (let v of cellClients) {
               clients.add(v);
             }
           }
@@ -134,10 +133,13 @@ export const spatial_grid = (() => {
       for (let x = i1[0], xn = i2[0]; x <= xn; ++x) {
         for (let y = i1[1], yn = i2[1]; y <= yn; ++y) {
           const k = this._Key(x, y);
-          if (!(k in this._cells)) {
-            this._cells[k] = new Set();
-          }
-          this._cells[k].add(client);
+          const cellClientsCheck = this._cells.get(k);
+          // NOTE: calling .get() on a Map is apparently currently (Sept 2022)
+          // faster in V8 than .get on a Set (https://stackoverflow.com/a/69338420)
+          const cellClients = cellClientsCheck || new Map();
+          cellClients.set(client, true);
+          if (!cellClientsCheck)
+            this._cells.set(k, cellClients);
         }
       }
     }
@@ -148,8 +150,7 @@ export const spatial_grid = (() => {
       for (let x = i1[0], xn = i2[0]; x <= xn; ++x) {
         for (let y = i1[1], yn = i2[1]; y <= yn; ++y) {
           const k = this._Key(x, y);
-
-          this._cells[k].delete(client);
+          this._cells.get(k)?.delete(client);
         }
       }
     }
@@ -305,10 +306,321 @@ export const spatial_grid = (() => {
     }
   }
 
+   class SpatialHash_SlowFixedOptimized {
+    constructor(bounds, dimensions) {
+      this._cells = new Map();
+
+      // NOTE: can preallocate everything, but it's the same perf as not.
+      // Probably because the test data is so uniform.
+
+      // for (let x = 0; x < dimensions[0]; x++) {
+      //   for (let y = 0; y < dimensions[1]; y++) {
+      //     this._cells.set(this._Key(x, y), new Set());
+      //   }
+      // }
+
+      this._dimensions = dimensions;
+      this._bounds = bounds;
+      this._queryIds = -1;
+    }
+  
+    _GetCellIndex(position) {
+      const x = math.sat((position[0] - this._bounds[0][0]) / (
+          this._bounds[1][0] - this._bounds[0][0]));
+      const y = math.sat((position[1] - this._bounds[0][1]) / (
+          this._bounds[1][1] - this._bounds[0][1]));
+  
+      const xIndex = Math.floor(x * (this._dimensions[0] - 1));
+      const yIndex = Math.floor(y * (this._dimensions[1] - 1));
+  
+      return [xIndex, yIndex];
+    }
+
+    _Key(i1, i2) {
+      return i1 + '.' + i2;
+    }
+  
+    NewClient(position, dimensions) {
+      const client = {
+        position: position,
+        dimensions: dimensions,
+        indices: null,
+        _queryId: -1,
+        _cells: {
+          min: null,
+          max: null,
+        }
+      };
+  
+      this._Insert(client);
+  
+      return client;
+    }
+  
+    UpdateClient(client) {
+      const [x, y] = client.position;
+      const [w, h] = client.dimensions;
+  
+      const i1 = this._GetCellIndex([x - w / 2, y - h / 2]);
+      const i2 = this._GetCellIndex([x + w / 2, y + h / 2]);
+  
+      if (client._cells.min[0] == i1[0] &&
+          client._cells.min[1] == i1[1] &&
+          client._cells.max[0] == i2[0] &&
+          client._cells.max[1] == i2[1]) {
+        return;
+      }
+
+      this.Remove(client);
+      this._Insert(client);
+    }
+  
+    FindNear(position, bounds) {
+      const [x, y] = position;
+      const [w, h] = bounds;
+  
+      const i1 = this._GetCellIndex([x - w / 2, y - h / 2]);
+      const i2 = this._GetCellIndex([x + w / 2, y + h / 2]);
+  
+      const clients = [];
+      const queryId = this._queryIds++;
+  
+      for (let x = i1[0], xn = i2[0]; x <= xn; ++x) {
+        for (let y = i1[1], yn = i2[1]; y <= yn; ++y) {
+          const k = this._Key(x, y);
+
+          const cellClients = this._cells.get(k);
+          if (cellClients) {
+            for (let v of cellClients) {
+              if (v._queryId !== queryId) {
+                v._queryId = queryId;
+                clients.push(v);
+              }
+            }
+          }
+        }
+      }
+      return clients;
+    }
+  
+    _Insert(client) {
+      const [x, y] = client.position;
+      const [w, h] = client.dimensions;
+  
+      const i1 = this._GetCellIndex([x - w / 2, y - h / 2]);
+      const i2 = this._GetCellIndex([x + w / 2, y + h / 2]);
+  
+      client.indices = [i1, i2];
+  
+      for (let x = i1[0], xn = i2[0]; x <= xn; ++x) {
+        for (let y = i1[1], yn = i2[1]; y <= yn; ++y) {
+          const k = this._Key(x, y);
+          const cellClientsCheck = this._cells.get(k);
+          const cellClients = cellClientsCheck || new Set();
+          cellClients.add(client);
+          if (!cellClientsCheck)
+            this._cells.set(k, cellClients);
+        }
+      }
+
+      client._cells.min = i1;
+      client._cells.max = i2;
+    }
+  
+    Remove(client) {
+      const [i1, i2] = client.indices;
+  
+      for (let x = i1[0], xn = i2[0]; x <= xn; ++x) {
+        for (let y = i1[1], yn = i2[1]; y <= yn; ++y) {
+          const k = this._Key(x, y);
+          this._cells.get(k)?.delete(client);
+        }
+      }
+    }
+  }
+
+  
+
+
+  /**
+   * @typedef {Object} ClientWithNumericId
+   * @property {[number, number]} position;
+   * @property {[[number, number], [number, number]]} dimensions;
+   * @property {[number, number] | null} indices
+   * @property {number} id
+   * @property {number} _queryId
+   * @property {{ min: null | [number, number]; max: null | [number, number]; }} _cells
+   **/
+
+
+  /**
+   * @typedef {((ClientWithNumericId)[] | undefined)[]} ArrayCellLookup
+   */
+
+   class SpatialHash_FlatArray {
+    constructor(bounds, dimensions) {
+      const [x, y] = dimensions;
+
+      /** @type {ArrayCellLookup} */
+      this._cells = new Array(dimensions[0] * dimensions[1]);
+      this._dimensions = dimensions;
+      this._bounds = bounds;
+
+      this._lastId = 0;
+      this._queryIds = 0;
+    }
+  
+    _GetCellIndex(position) {
+      const x = math.sat((position[0] - this._bounds[0][0]) / (
+          this._bounds[1][0] - this._bounds[0][0]));
+      const y = math.sat((position[1] - this._bounds[0][1]) / (
+          this._bounds[1][1] - this._bounds[0][1]));
+  
+      const xIndex = Math.floor(x * (this._dimensions[0] - 1));
+      const yIndex = Math.floor(y * (this._dimensions[1] - 1));
+  
+      return [xIndex, yIndex];
+    }
+
+    /**
+     * 
+     * @param {number} i1 
+     * @param {number} i2 
+     * @returns {number}
+     */
+    _Key(i1, i2) {
+      return i1 * this._dimensions[0] + i2;
+    }
+  
+    NewClient(position, dimensions) {
+      /** @type ClientWithNumericId */
+      const client = {
+        position: position,
+        dimensions: dimensions,
+        indices: null,
+        id: this._lastId++,
+        _queryId: -1,
+        _cells: {
+          min: null,
+          max: null,
+        },
+      };
+  
+      this._Insert(client);
+  
+      return client;
+    }
+  
+    UpdateClient(client) {
+      const [x, y] = client.position;
+      const [w, h] = client.dimensions;
+  
+      const i1 = this._GetCellIndex([x - w / 2, y - h / 2]);
+      const i2 = this._GetCellIndex([x + w / 2, y + h / 2]);
+  
+      if (client._cells.min[0] == i1[0] &&
+          client._cells.min[1] == i1[1] &&
+          client._cells.max[0] == i2[0] &&
+          client._cells.max[1] == i2[1]) {
+        return;
+      }
+
+      this.Remove(client);
+      this._Insert(client);
+    }
+  
+    FindNear(position, bounds) {
+      const [x, y] = position;
+      const [w, h] = bounds;
+  
+      const i1 = this._GetCellIndex([x - w / 2, y - h / 2]);
+      const i2 = this._GetCellIndex([x + w / 2, y + h / 2]);
+  
+      const clients = [];
+  
+      const queryId = this._queryIds++;
+
+      for (let x = i1[0], xn = i2[0]; x <= xn; ++x) {
+        for (let y = i1[1], yn = i2[1]; y <= yn; ++y) {
+          const k = this._Key(x, y);
+
+          const cellClients = this._cells[k];
+          if (cellClients) {
+            for (let i = 0; i < cellClients.length; i++) {
+              const v = cellClients[i];
+              if (v._queryId != queryId) {
+                v._queryId = queryId;
+                clients.push(v);
+              }
+            }
+          }
+        }
+      }
+      return clients;
+    }
+  
+    _Insert(client) {
+      const [x, y] = client.position;
+      const [w, h] = client.dimensions;
+  
+      const i1 = this._GetCellIndex([x - w / 2, y - h / 2]);
+      const i2 = this._GetCellIndex([x + w / 2, y + h / 2]);
+  
+      client.indices = [i1, i2];
+  
+      for (let x = i1[0], xn = i2[0]; x <= xn; ++x) {
+        for (let y = i1[1], yn = i2[1]; y <= yn; ++y) {
+          const k = this._Key(x, y);
+          /** @type {ClientWithNumericId[]} */
+          const cellClients = this._cells[k] || [];
+          const found = cellClients.find(c => c.id === client.id);
+          if (!found) {
+            cellClients.push(client)
+          }
+          this._cells[k] = cellClients;
+        }
+      }
+      
+      client._cells.min = i1;
+      client._cells.max = i2;
+    }
+  
+    /**
+     * 
+     * @param {ClientWithNumericId} client 
+     */
+    Remove(client) {
+      if (!client.indices) return;
+      const [i1, i2] = client.indices;
+  
+      for (let x = i1[0], xn = i2[0]; x <= xn; ++x) {
+        for (let y = i1[1], yn = i2[1]; y <= yn; ++y) {
+          const k = this._Key(x, y);
+
+            const cellClients = this._cells[k];
+            if (!cellClients) continue;
+            for (let i = 0; i < cellClients.length; i++) {
+              if (cellClients[i].id === client.id) {
+                if (i === cellClients.length - 1) {
+                  cellClients.pop();
+                } else {
+                  const last = cellClients.pop();
+                  if (last)
+                    cellClients[i] = last;
+                }
+              }
+            }
+        }
+      }
+    }
+  }
+
   return {
     SpatialHash_Crap: SpatialHash_Crap,
-    SpatialHash_Slow: SpatialHash_Slow,
+    SpatialHash_SlowFixed,
     SpatialHash_Fast: SpatialHash_Fast,
+    SpatialHash_SlowFixedOptimized,
+    SpatialHash_FlatArray
   };
 
 })();

@@ -1,5 +1,5 @@
-import {math} from './math.js';
-import {spatial_grid} from './spatial-grid.js';
+import { math } from './math.js';
+import { spatial_grid } from './spatial-grid.js';
 
 // Testing harness
 
@@ -82,20 +82,20 @@ class GridTester {
 }
 
 
-const gridSlow = new GridTester(spatial_grid.SpatialHash_Crap);
-const gridFast = new GridTester(spatial_grid.SpatialHash_Slow);
+const gridSlow = new GridTester(spatial_grid.SpatialHash_Fast);
+const gridFast = new GridTester(spatial_grid.SpatialHash_SlowFixedOptimized);
 
-console.log('Spatial Grid (Naive) - FindNearby: ' + gridSlow.Test_FindNearby() + 'ms');
-console.log('Spatial Grid - FindNearby: ' + gridFast.Test_FindNearby() + 'ms');
+console.log('Spatial Grid A - FindNearby: ' + gridSlow.Test_FindNearby() + 'ms');
+console.log('Spatial Grid B - FindNearby: ' + gridFast.Test_FindNearby() + 'ms');
 console.log('----------------------------------');
-console.log('Spatial Grid (Naive) - FindNearby: ' + gridSlow.Test_FindNearby() + 'ms');
-console.log('Spatial Grid - FindNearby: ' + gridFast.Test_FindNearby() + 'ms');
+console.log('Spatial Grid A - FindNearby: ' + gridSlow.Test_FindNearby() + 'ms');
+console.log('Spatial Grid B - FindNearby: ' + gridFast.Test_FindNearby() + 'ms');
 
 console.log('----------------------------------');
 console.log('----------------------------------');
 
-console.log('Spatial Grid (Naive) - Update: ' + gridSlow.Test_Update() + 'ms');
-console.log('Spatial Grid - Update: ' + gridFast.Test_Update() + 'ms');
+console.log('Spatial Grid A - Update: ' + gridSlow.Test_Update() + 'ms');
+console.log('Spatial Grid B - Update: ' + gridFast.Test_Update() + 'ms');
 console.log('----------------------------------');
-console.log('Spatial Grid (Naive) - Update: ' + gridSlow.Test_Update() + 'ms');
-console.log('Spatial Grid - Update: ' + gridFast.Test_Update() + 'ms');
+console.log('Spatial Grid A - Update: ' + gridSlow.Test_Update() + 'ms');
+console.log('Spatial Grid B - Update: ' + gridFast.Test_Update() + 'ms');
